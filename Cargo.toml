@@ -2,7 +2,7 @@
 name = "steamsweep"
 version = "0.1.0"
 edition = "2021"
-description = "SteamSweep M1 - read-only Steam leftover scanner (CLI)"
+description = "SteamSweep — Steam 残留清理二合一：已卸载游戏安装残留清理 + 存档管理/清理（GUI+CLI）"
 
 [dependencies]
 eframe = "0.31"
