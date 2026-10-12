@@ -1,5 +1,7 @@
 *.log
 *.png
+!assets/logo_256.png
+!assets/empty_state_512.png
 .cargo/config.toml
 __pycache__/
 crash.log

@@ -128,8 +128,9 @@ pub fn scan_fast(
     installed_appids: &HashSet<u32>,
     cloud_covered_dirs: &HashSet<String>,
     on_item: Option<&(dyn Fn(&HeuristicDir) + Sync)>,
+    extra_roots: &[PathBuf],
 ) -> (HeuristicReport, Vec<String>) {
-    scan_inner(ScanMode::Fast, steam_path, installed_appids, cloud_covered_dirs, on_item)
+    scan_inner(ScanMode::Fast, steam_path, installed_appids, cloud_covered_dirs, on_item, extra_roots)
 }
 
 /// 完整版（M3 备用）：附加引擎特征 / 目录名 / 扩展名规则。
@@ -139,7 +140,7 @@ pub fn scan_full(
     installed_appids: &HashSet<u32>,
     cloud_covered_dirs: &HashSet<String>,
 ) -> (HeuristicReport, Vec<String>) {
-    scan_inner(ScanMode::Full, steam_path, installed_appids, cloud_covered_dirs, None)
+    scan_inner(ScanMode::Full, steam_path, installed_appids, cloud_covered_dirs, None, &[])
 }
 
 fn scan_inner(
@@ -148,6 +149,7 @@ fn scan_inner(
     installed_appids: &HashSet<u32>,
     cloud_covered_dirs: &HashSet<String>,
     on_item: Option<&(dyn Fn(&HeuristicDir) + Sync)>,
+    extra_roots: &[PathBuf],
 ) -> (HeuristicReport, Vec<String>) {
     let warnings = Vec::new();
     let mut report = HeuristicReport::default();
@@ -178,6 +180,10 @@ fn scan_inner(
     }
     if let Some(roaming) = util::env_path("APPDATA") {
         roots.push(RootSpec { path: roaming, kind: RootKind::Roaming, max_depth: 5 });
+    }
+    // 用户在设置里添加的自定义扫描目录（M3）
+    for extra in extra_roots {
+        roots.push(RootSpec { path: extra.clone(), kind: RootKind::Local, max_depth: 5 });
     }
     roots.retain(|r| r.path.exists());
 

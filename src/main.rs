@@ -6,8 +6,12 @@
 //! 红线：本程序全程只读，不修改、不删除、不移动任何文件。
 #![windows_subsystem = "windows"]
 
+mod appinfo; // M3：appinfo.vdf 二进制解析（ufs/saveblocks 官方存档配置）
+mod savedb; // M3：SaveDB 捆绑快照（离线游戏名 + 存档路径后缀归属）
+mod watcher; // M4：卸载事件监听（acf 快照 diff + Toast 提醒）
 #[allow(dead_code)]
 mod heuristic; // 共性痕迹扫描：Fast=黄金标记（限常见目录）+ stats bin；Full 为 M3 备用
+mod cleaner; // M2：回收站删除 + 存档备份 + 操作日志（只作用本地，永不触碰云端）
 mod gui;
 mod locator;
 mod manifest;
@@ -117,6 +121,24 @@ fn attach_parent_console() {
 #[cfg(not(windows))]
 fn attach_parent_console() {}
 
+/// CLI 侧读取设置里的自定义扫描目录（config.json 与 GUI 共用）。
+fn extra_dirs_cli() -> Vec<std::path::PathBuf> {
+    let path = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("SteamSweep")
+        .join("config.json");
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v["extra_scan_dirs"].as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|x| x.as_str().map(std::path::PathBuf::from))
+        .filter(|p| p.exists())
+        .collect()
+}
+
 fn run_cli() {
     println!("SteamSweep M1 · 只读扫描器（本工具不修改任何文件）");
     let t0 = Instant::now();
@@ -156,7 +178,7 @@ fn run_cli() {
     );
 
     // 4) savemap：remotecache.vdf + Root 映射 + syncstate
-    let (saves, w) = savemap::scan(&loc.steam_path, &loc.accounts, &installed, None);
+    let (mut saves, w) = savemap::scan(&loc.steam_path, &loc.accounts, &installed, None);
     warnings.extend(w);
     println!(
         "[4/5] 存档索引：{} 个 App，残留 {} 个，🔴 未上传风险 {} 个（{:.1?}）",
@@ -166,6 +188,17 @@ fn run_cli() {
         t0.elapsed()
     );
 
+    // 4b) appinfo.vdf ufs 补定位（M3）：索引丢失的已卸载游戏用官方 Auto-Cloud 配置补定位
+    let indexed: HashSet<u32> = saves
+        .records
+        .iter()
+        .filter(|r| r.has_index)
+        .map(|r| r.appid)
+        .collect();
+    let ufs = savemap::ufs_supplement(&loc.steam_path, &loc.accounts, &installed, &indexed);
+    println!("[4b] appinfo 补定位：{} 个游戏（{:.1?}）", ufs.len(), t0.elapsed());
+    saves.records.extend(ufs);
+
     // 5) 快速痕迹扫描：黄金标记（限常见目录）+ stats bin
     let installed_ids: HashSet<u32> = installed.keys().copied().collect();
     let mut covered: HashSet<String> = HashSet::new();
@@ -174,7 +207,7 @@ fn run_cli() {
             covered.insert(util::normalize_path(d));
         }
     }
-    let (heur, w) = heuristic::scan_fast(&loc.steam_path, &installed_ids, &covered, None);
+    let (heur, w) = heuristic::scan_fast(&loc.steam_path, &installed_ids, &covered, None, &extra_dirs_cli());
     warnings.extend(w);
     println!(
         "[5/5] 痕迹扫描：黄金标记 {} 个目录（新发现 {} 个），stats bin {} 个 App（{:.1?}）",

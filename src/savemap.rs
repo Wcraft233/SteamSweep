@@ -8,7 +8,7 @@ use crate::util;
 use crate::vdf;
 use rayon::prelude::*;
 use serde::Serialize;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// 最近进度未同步的阈值：localtime 比 remotetime 新超过 1 小时。
@@ -95,7 +95,7 @@ pub struct SaveReport {
 }
 
 /// Root 编号映射表（方案 §3.2，已本机实测验证）。未知 root 返回 None → 报告标记"未知位置"。
-fn root_base(root: u32, steam_path: &Path, uid: u32, appid: u32, installed: Option<&InstalledApp>) -> Option<PathBuf> {
+pub(crate) fn root_base(root: u32, steam_path: &Path, uid: u32, appid: u32, installed: Option<&InstalledApp>) -> Option<PathBuf> {
     match root {
         // Default：Steam\userdata\<uid>\<appid>\remote\
         0 => Some(
@@ -132,6 +132,94 @@ struct ScanTask {
     account_id: u32,
     appid: u32,
     dir: PathBuf,
+}
+
+/// appinfo ufs 的命名 root（"WinSavedGames" 等）→ 编号 root → 本地基路径。
+/// Mac/Linux 专用 root 在 Windows 上不可解析，返回 None。
+pub(crate) fn named_root_base(
+    name: &str,
+    steam_path: &Path,
+    uid: u32,
+    appid: u32,
+    installed: Option<&InstalledApp>,
+) -> Option<PathBuf> {
+    let n = name.trim().trim_start_matches('%').trim_end_matches('%');
+    let root = match n.to_ascii_lowercase().as_str() {
+        "winmydocuments" | "documents" => 2,
+        "winappdatalocal" | "appdatalocal" => 3,
+        "winappdataroaming" | "appdataroaming" => 6,
+        "winsavedgames" | "savedgames" => 9,
+        "steamclouddocuments" => 11,
+        "winappdatalocallow" | "appdatalocallow" => 12,
+        "gameinstall" | "game_install" | "install" => 1,
+        _ => return None,
+    };
+    root_base(root, steam_path, uid, appid, installed)
+}
+
+/// M3：appinfo ufs 补定位。为"已卸载且 remotecache 索引缺失"的游戏，
+/// 用 Steam 官方 Auto-Cloud 配置补定位仍存在的存档目录，合成 NoIndex 记录。
+pub fn ufs_supplement(
+    steam_path: &Path,
+    accounts: &[Account],
+    installed: &BTreeMap<u32, InstalledApp>,
+    indexed: &HashSet<u32>,
+) -> Vec<AppSaveRecord> {
+    let blocks = crate::appinfo::parse_ufs(steam_path);
+    let primary = accounts.first().map(|a| a.account_id).unwrap_or(0);
+    let mut extra: HashMap<u32, Vec<PathBuf>> = HashMap::new();
+    for b in &blocks {
+        if installed.contains_key(&b.appid) || indexed.contains(&b.appid) {
+            continue; // 已安装或已有云索引的不需要补
+        }
+        if b.path.contains('%') || b.path.contains('{') {
+            continue; // 占位符无法解析的跳过
+        }
+        for acc in accounts {
+            if let Some(base) = named_root_base(&b.root, steam_path, acc.account_id, b.appid, None) {
+                let rel = b.path.replace('/', "\\");
+                let dir = if rel.is_empty() { base.clone() } else { base.join(&rel) };
+                if dir.is_dir() {
+                    extra.entry(b.appid).or_default().push(dir);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (appid, mut dirs) in extra {
+        dirs.sort();
+        dirs.dedup();
+        let mut bytes = 0u64;
+        let mut files = 0u64;
+        for d in &dirs {
+            let st = util::dir_stat_cached(d);
+            bytes += st.bytes;
+            files += st.files;
+        }
+        if files == 0 {
+            continue; // 空目录不出记录
+        }
+        out.push(AppSaveRecord {
+            appid,
+            account_id: primary,
+            name: None,
+            installed: false,
+            userdata_bytes: bytes,
+            userdata_files: files,
+            remote_bytes: 0,
+            remote_files: 0,
+            has_index: false,
+            is_empty_shell: false,
+            remote_without_index: false,
+            cloud_files: 0,
+            cloud_bytes: 0,
+            sync: SyncVerdict::NoIndex,
+            local_save_dirs: dirs,
+            ac_skeleton: Vec::new(),
+            files: Vec::new(),
+        });
+    }
+    out
 }
 
 pub fn scan(
