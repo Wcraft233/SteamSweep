@@ -19,11 +19,21 @@ fn embed_version_info() -> Result<(), String> {
     let rc_path = std::path::Path::new(&out_dir).join("version.rc");
     let obj_path = std::path::Path::new(&out_dir).join("version.o");
 
-    let rc = r#"
-#include <windows.h>
+    // 版本号取自 Cargo.toml，不在此处硬编码
+    let ver = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".to_string());
+    let mut parts = ver.split('.').map(|s| s.parse::<u32>().unwrap_or(0));
+    let (maj, min, pat) = (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    );
+    // 注意：不要 #include <windows.h> —— rc.exe 在裸 CI 环境下没有 INCLUDE 路径，
+    // 会报 RC1015 找不到头文件；VERSIONINFO 是 RC 内建语句，无需任何头文件。
+    let rc = format!(
+        r#"
 1 VERSIONINFO
-FILEVERSION 0,1,0,0
-PRODUCTVERSION 0,1,0,0
+FILEVERSION {maj},{min},{pat},0
+PRODUCTVERSION {maj},{min},{pat},0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS 0x40004L
@@ -35,13 +45,13 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "SteamSweep Project"
-            VALUE "FileDescription", "SteamSweep - Steam leftover scanner (read-only)"
-            VALUE "FileVersion", "0.1.0"
+            VALUE "FileDescription", "SteamSweep - Steam leftover cleaner"
+            VALUE "FileVersion", "{ver}"
             VALUE "InternalName", "steamsweep"
             VALUE "LegalCopyright", "MIT License"
             VALUE "OriginalFilename", "steamsweep.exe"
             VALUE "ProductName", "SteamSweep"
-            VALUE "ProductVersion", "0.1.0"
+            VALUE "ProductVersion", "{ver}"
         END
     END
     BLOCK "VarFileInfo"
@@ -49,7 +59,8 @@ BEGIN
         VALUE "Translation", 0x409, 1200
     END
 END
-"#;
+"#
+    );
     std::fs::write(&rc_path, rc).map_err(|e| e.to_string())?;
 
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
