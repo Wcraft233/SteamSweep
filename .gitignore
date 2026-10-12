@@ -1,0 +1,9 @@
+*.log
+*.png
+.cargo/config.toml
+__pycache__/
+crash.log
+gui_err.log
+run.log
+steamsweep-report.json
+target/

@@ -1,0 +1,24 @@
+[package]
+name = "steamsweep"
+version = "0.1.0"
+edition = "2021"
+description = "SteamSweep M1 - read-only Steam leftover scanner (CLI)"
+
+[dependencies]
+eframe = "0.31"
+egui_extras = "0.31"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+ureq = { version = "2", default-features = false, features = ["native-tls"] }
+native-tls = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rayon = "1"
+walkdir = "2"
+winreg = "0.52"
+chrono = "0.4"
+jwalk = "0.9.0"
+
+[build-dependencies]
+
+[profile.release]
+opt-level = 2
